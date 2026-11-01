@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rádio</title>
+<style>
+:root{--bg:#f3f1ed;--card:#fff;--ink:#1d1d1b;--mute:#6b6a66;--line:#d8d5ce;--acc:#c4361b;--acc-ink:#fff;--pos:0;--q:0}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#141413;--card:#1e1e1c;--ink:#f1efe9;--mute:#9a978f;--line:#33322f;--acc:#ec6a4e;--acc-ink:#1a0a05}}
+:root[data-theme="dark"]{--bg:#141413;--card:#1e1e1c;--ink:#f1efe9;--mute:#9a978f;--line:#33322f;--acc:#ec6a4e;--acc-ink:#1a0a05}
+html,body{margin:0;min-height:100%}
+body{background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;justify-content:center;padding:24px 14px 40px;padding-top:calc(24px + env(safe-area-inset-top,0px))}
+main{width:100%;max-width:460px;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px}
+.head{display:flex;justify-content:space-between;align-items:center}
+h1{font-size:1rem;font-weight:600;margin:0}
+#power{font:inherit;font-size:.9rem;padding:8px 16px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--ink);cursor:pointer}
+#power[aria-pressed="true"]{background:var(--acc);color:var(--acc-ink);border-color:var(--acc)}
+#fdisp{display:block;font-size:2.8rem;font-weight:300;letter-spacing:-.02em;margin:20px 0 4px;font-variant-numeric:tabular-nums}
+#info{min-height:1.4em;color:var(--mute);font-size:.92rem;margin-bottom:14px}
+.signal{height:4px;border-radius:2px;background:var(--line);margin-bottom:16px;overflow:hidden}
+.signal i{display:block;height:100%;width:calc(var(--q)*100%);background:var(--acc);transition:width .2s}
+label{display:block;font-size:.8rem;color:var(--mute);margin:14px 0 4px}
+input[type=range]{width:100%;accent-color:var(--acc)}
+#stations{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.st{font:inherit;font-size:.85rem;padding:7px 12px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--ink);cursor:pointer}
+.st:hover{border-color:var(--acc)}
+button:focus-visible,input:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+.find{display:flex;gap:8px;margin-top:20px}
+.find input{flex:1;min-width:0;font:inherit;padding:9px 11px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--ink)}
+.find button{font:inherit;padding:9px 16px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--ink);cursor:pointer}
+.hint{font-size:.78rem;color:var(--mute);margin:12px 0 0}
+</style>
+</head>
+<body>
+<main>
+  <div class="head"><h1>Rádio</h1><button id="power" aria-pressed="false">Ligar</button></div>
+  <output id="fdisp">90.0 MHz</output>
+  <div id="info" role="status" aria-live="polite"></div>
+  <div class="signal" aria-hidden="true"><i></i></div>
+  <label for="freq">Sintonia</label>
+  <input id="freq" type="range" min="875" max="1080" value="900">
+  <label for="vol">Volume</label>
+  <input id="vol" type="range" min="0" max="100" value="70">
+  <div id="stations"></div>
+  <div class="find"><input id="q" placeholder="Procurar estação" aria-label="Procurar estação"><button id="find">Procurar</button></div>
+  <p class="hint">Estações do diretório aberto radio-browser.info. Entre duas estações ouve-se estática.</p>
+</main>
+<script>
+(function(){
+  var $=function(i){return document.getElementById(i)};
+  var freq=$("freq"),vol=$("vol"),pw=$("power"),info=$("info"),fdisp=$("fdisp"),list=$("stations"),
+      aud=new Audio(),ctx=null,ng=null,on=false,st=[],cur=-1,tmr=null,root=document.documentElement;
+  aud.preload="none";
+  var API=["https://de1.api.radio-browser.info","https://at1.api.radio-browser.info","https://fi1.api.radio-browser.info"];
+  function clamp(x,a,b){return Math.max(a,Math.min(b,x))}
+  function say(t){info.textContent=t}
+  function api(path){
+    var i=0;
+    function t(){return fetch(API[i]+path).then(function(r){if(!r.ok)throw 0;return r.json()}).catch(function(){if(++i<API.length)return t();throw 0})}
+    return t();
+  }
+
+  /* Botões rotativos: controlam o input range com o mesmo id (data-for) */
+  Array.prototype.forEach.call(document.querySelectorAll("[data-for]"),function(k){
+    var inp=$(k.getAttribute("data-for")),mn=+inp.min,mx=+inp.max,sx=null,sv=0,px=+(k.getAttribute("data-px")||2),stp=+(k.getAttribute("data-step")||1);
+    function rot(){
+      k.style.transform="rotate("+((inp.value-mn)/(mx-mn)*270-135)+"deg)";
+      k.setAttribute("aria-valuemin",mn);k.setAttribute("aria-valuemax",mx);k.setAttribute("aria-valuenow",inp.value);
+    }
+    function set(v){inp.value=clamp(Math.round(v),mn,mx);inp.dispatchEvent(new Event("input"))}
+    k.addEventListener("pointerdown",function(e){sx=e.clientX;sv=+inp.value;k.setPointerCapture(e.pointerId)});
+    k.addEventListener("pointermove",function(e){if(sx!==null)set(sv+(e.clientX-sx)/px)});
+    k.addEventListener("pointerup",function(){sx=null});
+    k.addEventListener("keydown",function(e){
+      var s=stp*(e.shiftKey?10:1);
+      if(e.key==="ArrowRight"||e.key==="ArrowUp"){set(+inp.value+s);e.preventDefault()}
+      if(e.key==="ArrowLeft"||e.key==="ArrowDown"){set(+inp.value-s);e.preventDefault()}
+    });
+    inp.addEventListener("input",rot);rot();
+  });
+
+  function render(){
+    list.innerHTML="";
+    st.forEach(function(s){
+      var b=document.createElement("button");b.type="button";b.className="st";b.textContent=s.name;
+      b.style.setProperty("--p",((s.f*10-875)/205*100)+"%");b.title=s.f.toFixed(1)+" MHz";
+      b.addEventListener("click",function(){freq.value=Math.round(s.f*10);freq.dispatchEvent(new Event("input"))});
+      list.appendChild(b);
+    });
+  }
+  function setStations(arr){
+    arr=arr.slice(0,8);var n=arr.length;
+    st=arr.map(function(s,i){return {name:s.name,url:s.url,f:n===1?98:Math.round((88.5+i*(18.5/(n-1)))*10)/10}});
+    cur=-1;render();update();
+  }
+
+  function play(i){
+    var s=st[i];aud.src=s.url;
+    aud.play().then(function(){say(s.name+" · "+s.f.toFixed(1)+" MHz")}).catch(function(){say("Sem sinal em "+s.name)});
+  }
+  aud.addEventListener("error",function(){if(cur>=0&&st[cur])say("Sem sinal em "+st[cur].name)});
+
+  function update(){
+    var f=freq.value/10,bi=-1,bd=99;
+    root.style.setProperty("--pos",(freq.value-875)/205);
+    fdisp.textContent=f.toFixed(1)+" MHz";
+    st.forEach(function(s,i){var d=Math.abs(s.f-f);if(d<bd){bd=d;bi=i}});
+    var q=bi<0?0:clamp(1-(bd-0.25)/0.75,0,1),v=vol.value/100;
+    root.style.setProperty("--q",on?q:0);
+    if(ng)ng.gain.value=on?(1-q)*v*0.3:0;
+    aud.volume=on?q*v:0;
+    if(!on)return;
+    if(bi>=0&&bd<1){
+      if(bi!==cur){cur=bi;clearTimeout(tmr);tmr=setTimeout(function(){play(bi)},250);say("A sintonizar "+st[bi].name+"…")}
+    }else{cur=-1;clearTimeout(tmr);aud.pause();say(st.length?"Só estática. Rode a sintonia.":"Sem estações no mostrador.")}
+  }
+  freq.addEventListener("input",update);vol.addEventListener("input",update);
+
+  pw.addEventListener("click",function(){
+    on=!on;root.classList.toggle("on",on);pw.setAttribute("aria-pressed",on);
+    if(on){
+      if(!ctx){
+        ctx=new (window.AudioContext||window.webkitAudioContext)();
+        var b=ctx.createBuffer(1,ctx.sampleRate*2,ctx.sampleRate),d=b.getChannelData(0);
+        for(var i=0;i<d.length;i++)d[i]=Math.random()*2-1;
+        var src=ctx.createBufferSource();src.buffer=b;src.loop=true;
+        var lp=ctx.createBiquadFilter();lp.type="lowpass";lp.frequency.value=3500;
+        ng=ctx.createGain();src.connect(lp);lp.connect(ng);ng.connect(ctx.destination);src.start();
+      }
+      ctx.resume();cur=-1;update();
+    }else{
+      aud.pause();clearTimeout(tmr);cur=-1;if(ctx)ctx.suspend();update();say("Desligada.");
+    }
+  });
+
+  function pick(r){
+    var seen={},out=[];
+    r.forEach(function(s){
+      var n=(s.name||"").trim().slice(0,28),u=s.url_resolved;
+      if(!n||!u||s.hls||seen[n.toLowerCase()])return;seen[n.toLowerCase()]=1;out.push({name:n,url:u});
+    });
+    if(!out.length){say("Nada encontrado.");return}
+    setStations(out);say(on?"Estações atualizadas.":out.length+" estações no mostrador. Ligue a rádio.");
+  }
+  function find(){
+    var q=$("q").value.trim();if(!q)return;say("A procurar…");
+    api("/json/stations/search?hidebroken=true&order=clickcount&reverse=true&limit=30&name="+encodeURIComponent(q)).then(pick).catch(function(){say("Sem ligação ao diretório de estações.")});
+  }
+  $("find").addEventListener("click",find);
+  $("q").addEventListener("keydown",function(e){if(e.key==="Enter")find()});
+
+  update();say("A carregar estações portuguesas…");
+  api("/json/stations/search?countrycode=PT&hidebroken=true&order=clickcount&reverse=true&limit=30").then(pick).catch(function(){say("Sem diretório. Procure uma estação pelo nome.")});
+})();
+
+(function(){var p=document.getElementById("power");p.addEventListener("click",function(){p.textContent=p.getAttribute("aria-pressed")==="true"?"Desligar":"Ligar"})})();
+</script>
+</body>
+</html>
